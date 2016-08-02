@@ -4,6 +4,7 @@ from base64 import b64encode
 from django.core.mail import EmailMultiAlternatives
 from django.core.mail.message import DEFAULT_ATTACHMENT_MIME_TYPE
 from django.conf import settings
+from email.mime.base import MIMEBase
 
 from .exceptions import UnsupportedContent
 
@@ -62,27 +63,40 @@ class SparkPostMessage(dict):
 
         if message.attachments:
             formatted['attachments'] = []
+            formatted['inline_images'] = []
             str_encoding = settings.DEFAULT_CHARSET
             for attachment in message.attachments:
-                filename, content, mimetype = attachment
+                if isinstance(attachment, MIMEBase):
+                    if attachment.get_content_maintype() == 'image':
+                        formatted['inline_images'].append({
+                            'name': attachment['Content-ID'][1:-1],  # Content-ID format: <name>
+                            'data': attachment.get_payload(),
+                            'type': attachment.get_content_type()
+                        })
+                    else:
+                        raise UnsupportedContent(
+                            'Content type %s is not supported' % attachment.get_content_maintype()
+                        )
+                else:
+                    filename, content, mimetype = attachment
 
-                if mimetype is None:
-                    mimetype, _ = mimetypes.guess_type(filename)
                     if mimetype is None:
-                        mimetype = DEFAULT_ATTACHMENT_MIME_TYPE
+                        mimetype, _ = mimetypes.guess_type(filename)
+                        if mimetype is None:
+                            mimetype = DEFAULT_ATTACHMENT_MIME_TYPE
 
-                try:
-                    if isinstance(content, unicode):
-                        content = content.encode(str_encoding)
-                except NameError:
-                    if isinstance(content, str):
-                        content = content.encode(str_encoding)
-                base64_encoded_content = b64encode(content)
-                formatted['attachments'].append({
-                    'name': filename,
-                    'data': base64_encoded_content.decode('ascii'),
-                    'type': mimetype
-                })
+                    try:
+                        if isinstance(content, unicode):
+                            content = content.encode(str_encoding)
+                    except NameError:
+                        if isinstance(content, str):
+                            content = content.encode(str_encoding)
+                    base64_encoded_content = b64encode(content)
+                    formatted['attachments'].append({
+                        'name': filename,
+                        'data': base64_encoded_content.decode('ascii'),
+                        'type': mimetype
+                    })
 
         if hasattr(message, 'substitution_data'):
             formatted['substitution_data'] = message.substitution_data
